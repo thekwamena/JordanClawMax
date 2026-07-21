@@ -1,0 +1,71 @@
+.iphone-frame {
+  position: relative;
+  width: 100%;
+  max-width: 180px;
+  aspect-ratio: 9 / 19.5;
+  margin: 0 auto;
+  background: #050505;
+  border-radius: 28px;
+  padding: 8px;
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.08),
+    0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+.iphone-frame__notch {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 46%;
+  height: 18px;
+  background: #050505;
+  border-radius: 0 0 12px 12px;
+  z-index: 2;
+}
+
+.iphone-frame__screen {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 20px;
+  overflow: hidden;
+  background: #1c1c22;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.iphone-frame__screen > * {
+  width: 100%;
+  height: 100%;
+}
+
+.iphone-frame__placeholder {
+  color: #5c5c66;
+  font-size: 11px;
+  text-align: center;
+  padding: 12px;
+}
+
+.iphone-frame__home-indicator {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 34%;
+  height: 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.35);
+  z-index: 2;
+}
+
+.iphone-frame__label {
+  position: absolute;
+  bottom: -22px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 11px;
+  color: #6d6d78;
+}

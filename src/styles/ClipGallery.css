@@ -1,0 +1,98 @@
+.clip-gallery {
+  width: 100%;
+}
+
+.clip-gallery__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.clip-gallery__header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.clip-gallery__still-processing {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #9a9aa5;
+}
+
+.clip-gallery__download-all {
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
+  color: #f4f4f6;
+  border-radius: 8px;
+  padding: 9px 16px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.clip-gallery__download-all:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.clip-gallery__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 20px;
+}
+
+.clip-gallery--empty,
+.clip-gallery--loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 80px 24px;
+  color: #9a9aa5;
+  background: #17171d;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+}
+
+.clip-gallery__spinner {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.12);
+  border-top-color: #ffd93d;
+  animation: clip-gallery-spin 0.8s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes clip-gallery-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.clip-gallery__loading-text {
+  margin: 0 0 16px;
+  font-size: 14px;
+}
+
+.clip-gallery__progress-track {
+  width: 100%;
+  max-width: 280px;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.clip-gallery__progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ff6b6b, #ffd93d);
+  transition: width 0.3s ease;
+}
+
+@media (max-width: 500px) {
+  .clip-gallery__grid {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 14px;
+  }
+}
