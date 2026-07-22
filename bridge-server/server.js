@@ -209,6 +209,17 @@ const NO_SCRIPT_INSTRUCTION =
   `Perform each step directly via individual bash/ffmpeg/whisper commands (the skill's own Workflow ` +
   `section), not a pre-written script.`;
 
+// Observed once: the model improvised `ffmpeg -acodec libopus ... audio.wav`
+// for the audio-extraction step - Opus can't be muxed into a WAV container,
+// so every attempt failed on literally the first command and the job timed
+// out having produced nothing at all. Giving the exact tested command up
+// front costs a few tokens and removes a whole class of self-inflicted
+// failure that a "do it correctly" instruction alone doesn't prevent.
+const AUDIO_EXTRACT_INSTRUCTION =
+  `For audio extraction use exactly this command (pcm_s16le is WAV-compatible; ` +
+  `do not substitute a different codec like libopus, which cannot be muxed into a .wav file): ` +
+  `ffmpeg -i {video} -vn -acodec pcm_s16le -ar 16000 -ac 1 {output}/work/audio.wav`;
+
 // Each attempt runs in its own fresh Gateway session (see runJob) to avoid
 // the context filling up and getting compacted/truncated over a long,
 // multi-nudge job - observed to make the model lose track of which time
@@ -230,6 +241,7 @@ function commonParams(job) {
     `reuse it, do not re-run whisper). Do not skip or fabricate transcript content. Clip duration should ` +
     `vary based on the actual content/moment, not be a fixed length - do not just chop the video into ` +
     `uniform back-to-back windows. ` +
+    `${AUDIO_EXTRACT_INSTRUCTION} ` +
     `${NO_SCRIPT_INSTRUCTION}`
   );
 }
