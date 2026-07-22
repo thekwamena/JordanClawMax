@@ -115,7 +115,11 @@ app.delete('/api/jobs/:id', (req, res) => {
 app.use('/files', express.static(OUTPUT_ROOT));
 
 if (require.main === module) {
-  app.listen(PORT, () => {
+  // Explicit IPv4 host - with no host given, Node defaults to the IPv6
+  // wildcard (::), and WSL2's Windows<->WSL localhost-forwarding relay does
+  // not reliably forward to that (confirmed by comparing against a Python
+  // http.server control, which defaults to 0.0.0.0 and forwards fine).
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`JordanClawMax bridge listening on http://localhost:${PORT}`);
     console.log(`Workspace: ${WORKSPACE}`);
   });
