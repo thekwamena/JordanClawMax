@@ -29,9 +29,45 @@ function isValidModelName(name) {
   return typeof name === 'string' && name.length > 0 && name.length < 200 && MODEL_NAME_PATTERN.test(name);
 }
 
+/**
+ * winget/npm installs update the User/Machine PATH in the registry, but this
+ * already-running process's process.env.PATH is a snapshot from when it
+ * launched - Windows has no equivalent of re-sourcing a shell rc file, so
+ * without this, every install step after the first "works" (winget reports
+ * success, files land on disk) but the tool still shows as missing until the
+ * whole app is restarted. Re-read both PATH scopes from the registry and
+ * merge them into this process's env after anything that might have changed
+ * them.
+ */
+async function refreshPath() {
+  if (!IS_WINDOWS) return;
+  try {
+    const script =
+      "[System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + " +
+      "[System.Environment]::GetEnvironmentVariable('Path','User')";
+    const result = await run('powershell.exe', ['-NoProfile', '-Command', script], { shell: false, timeout: 10000 });
+    if (result.ok && result.stdout) {
+      process.env.PATH = result.stdout.trim();
+    }
+  } catch (err) {
+    // Best-effort - if this fails, commands just keep using the PATH the app launched with.
+  }
+}
+
+// Python's default console encoding on Windows is the legacy cp1252 codepage,
+// not UTF-8 - whisper's own --help text lists supported languages using
+// non-Latin1 characters (e.g. Chinese), which crashes with a
+// UnicodeEncodeError before it ever gets to argument parsing. This isn't
+// whisper being broken, it's this one Windows default; force UTF-8 for every
+// command this file spawns so detection doesn't trip over it, and (see the
+// whisper install step) persist it system-wide so the OpenClaw agent's own
+// later whisper invocations - a separate process this file doesn't control -
+// don't hit the same crash mid-transcription on non-English content.
+const PY_ENV = { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' };
+
 function run(cmd, args, opts = {}) {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: 15000, shell: IS_WINDOWS, ...opts }, (err, stdout, stderr) => {
+    execFile(cmd, args, { timeout: 15000, shell: IS_WINDOWS, env: { ...process.env, ...PY_ENV }, ...opts }, (err, stdout, stderr) => {
       resolve({ ok: !err, code: err?.code ?? 0, stdout: (stdout || '').trim(), stderr: (stderr || '').trim() });
     });
   });
@@ -62,6 +98,7 @@ async function checkOpenclawGateway() {
 }
 
 app.get('/api/setup/status', async (req, res) => {
+  await refreshPath();
   const [node, ffmpeg, python, whisper, ollama, ollamaModels, openclaw, gateway] = await Promise.all([
     checkCommand('node', ['--version']),
     checkCommand('ffmpeg', ['-version']),
@@ -88,7 +125,7 @@ function startTask(commands) {
     for (const [cmd, args] of commands) {
       task.log.push(`$ ${cmd} ${args.join(' ')}`);
       const ok = await new Promise((resolve) => {
-        const child = spawn(cmd, args, { shell: IS_WINDOWS });
+        const child = spawn(cmd, args, { shell: IS_WINDOWS, env: { ...process.env, ...PY_ENV } });
         child.stdout.on('data', (d) => task.log.push(d.toString()));
         child.stderr.on('data', (d) => task.log.push(d.toString()));
         child.on('close', (code) => resolve(code === 0));
@@ -115,7 +152,15 @@ const INSTALL_STEPS = {
   node: () => [['winget', ['install', '--id', 'OpenJS.NodeJS', ...WINGET_COMMON]]],
   ffmpeg: () => [['winget', ['install', '--id', 'Gyan.FFmpeg', ...WINGET_COMMON]]],
   python: () => [['winget', ['install', '--id', 'Python.Python.3.12', ...WINGET_COMMON]]],
-  whisper: () => [['python', ['-m', 'pip', 'install', '-U', 'openai-whisper']]],
+  // setx persists PYTHONUTF8 for the user account (registry), not just this
+  // process - so the OpenClaw agent's own later whisper invocations (a
+  // separate process this file has no control over) also avoid the
+  // UnicodeEncodeError crash whisper's --help hits on Windows' default
+  // console encoding (see PY_ENV above).
+  whisper: () => [
+    ['python', ['-m', 'pip', 'install', '-U', 'openai-whisper']],
+    ['setx', ['PYTHONUTF8', '1']],
+  ],
   ollama: () => [['winget', ['install', '--id', 'Ollama.Ollama', ...WINGET_COMMON]]],
   openclaw: () => [['npm', ['install', '-g', 'openclaw']]],
 };

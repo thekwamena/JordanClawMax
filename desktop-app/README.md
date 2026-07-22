@@ -74,12 +74,6 @@ since the desktop app loads the built output, not the dev server.
 
 ## Known gaps / what's untested
 
-- **Whisper's install step uses the same `pip install openai-whisper`
-  command already validated to work (on WSL, earlier in this project) - but
-  hasn't been run start-to-finish natively on Windows** in this repo. The
-  mechanism itself (winget install progress streaming, task polling) is
-  validated via the ffmpeg step, which does go through the exact same code
-  path.
 - **Only tested on one machine.** A genuinely fresh machine may hit
   package-manager states this wasn't tested against (e.g. no `winget` at
   all - rare on modern Windows 10/11, but not universal).
@@ -93,3 +87,99 @@ since the desktop app loads the built output, not the dev server.
   every agent turn on a smaller GPU. Someone with a lot more or a lot less
   VRAM than this project's dev machine may need to adjust this by hand
   (`openclaw config patch`) after the wizard finishes.
+
+## Troubleshooting
+
+Things actually hit (and fixed) while building/testing this, in case they
+show up again on someone else's machine. All of these are fixed as of
+v1.2.0 - if you're on an older build, update first.
+
+### "Re-check everything" still shows a tool as missing right after installing it
+
+**Symptom:** the wizard's install step reports success, but the checklist
+still shows that tool as pending/missing even after clicking "Re-check
+everything" a few times.
+
+**Cause:** winget/pip/npm installs update the Windows registry's PATH, but
+this app is a single already-running process - it read PATH once at launch
+and, unlike a shell, has no way to "re-source" it. Every install after the
+first one so far in this session doesn't take effect until something
+re-reads PATH.
+
+**Fixed in the app itself** (v1.2.0+): "Re-check everything" now re-reads
+PATH from the registry before checking anything. If you're still stuck,
+**fully quit and relaunch the app** - that always picks up a fresh PATH.
+
+### Python step fails with "Found an existing package already installed... No available upgrade found" then the whole step fails
+
+**Cause:** same root issue as above, just via a different symptom - winget
+correctly sees Python is already installed (from an earlier attempt) and
+has nothing to do, but the app's PATH is still stale so it still shows
+Python as missing, and you end up re-clicking Install into a dead end.
+
+**Fix:** click "Re-check everything" (or relaunch the app) rather than
+re-running Install once winget says there's nothing to upgrade.
+
+### Whisper install "succeeds" (you can see it download/install in the log) but never gets a green checkmark, and the detail line just says "Traceback (most recent call last):"
+
+**Cause:** this is not a failed install. `whisper --help` prints its list of
+supported languages, which includes non-Latin1 characters (e.g. Chinese) -
+Python's default console encoding on Windows (`cp1252`) can't represent
+those characters, so the health-check command itself crashes with a
+`UnicodeEncodeError`, even though `openai-whisper` is genuinely installed
+and works fine for actual transcription.
+
+**Fixed in the app** (v1.2.0+): every command this app runs sets
+`PYTHONUTF8=1`/`PYTHONIOENCODING=utf-8`, and the whisper install step also
+persists `PYTHONUTF8=1` for your Windows user account (`setx`) so later
+transcription runs - driven by a separate OpenClaw process this app doesn't
+control - don't hit the same crash on non-English audio.
+
+**If you still see this:** open a terminal and run
+`python -m pip show openai-whisper` - if that shows a version, whisper is
+installed and this is just the same display bug; update to the latest
+build. If it shows nothing, the install genuinely failed - re-run the
+Whisper install step and read the full log for the real error.
+
+### "openclaw" shows as missing even though you can run it fine in PowerShell
+
+**Cause:** `openclaw` (and `npm`) install as `.cmd` shims on Windows, which
+Node's `execFile`/`spawn` can't resolve without going through a shell -
+unlike Linux/WSL, where these are plain executables.
+
+**Fixed in the app** - every command runs with `shell: true` on Windows for
+exactly this reason. If you still see this on a very old build, update.
+
+### Gateway configuration hangs on "Gateway service missing... Start with: openclaw gateway install"
+
+**Cause:** on a completely fresh machine, `openclaw gateway restart`/`start`
+manage an *existing* Windows Scheduled Task - there isn't one yet on a first
+run. Confusingly, `openclaw` exits with code **0** even when reporting this,
+so it's easy to assume it's a warning rather than a real failure.
+
+**Fixed in the app** - the gateway-configure step now detects this message
+and runs `openclaw gateway install` first (registers the Scheduled Task),
+then retries `start`. If you hit this manually outside the wizard, the fix
+is literally to run `openclaw gateway install` yourself first.
+
+### `EADDRINUSE: address already in use :::8787` in the console / app won't start
+
+**Cause:** another copy of the app (or a leftover process from a crashed
+one) is still running and holding the bridge server's port.
+
+**Fix:** open Task Manager, end any other `JordanClawMax`/`electron.exe`
+processes, then relaunch. (If you're building from source and testing
+multiple copies at once, run one with a different port:
+`$env:PORT=8788; .\JordanClawMax.exe`.)
+
+### A Windows Firewall / "Windows Security" prompt appears on first launch
+
+This is expected, not a bug - the app's local bridge server is binding a
+network port (loopback-only; nothing external can reach it). Click **Allow**.
+
+### `winget` isn't available at all
+
+Rare on a modern Windows 10/11 install, but if `winget` genuinely isn't
+present, the automated install steps (Node, ffmpeg, Python, Ollama) will
+fail outright. Install `App Installer` from the Microsoft Store (which
+provides `winget`), then retry.
