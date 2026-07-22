@@ -6,7 +6,14 @@ import axios from 'axios';
 // via the agent's exec tool), not a callable microservice. The bridge server
 // runs the agent turn(s), watches the output directory, and exposes plain
 // HTTP so this browser app can drive it. See bridge-server/README.md.
-const BRIDGE_URL = process.env.REACT_APP_BRIDGE_URL || 'http://localhost:8787';
+//
+// In the desktop app, the bridge's actual port is decided at runtime (see
+// desktop-app/main.js) and handed to us via preload.js rather than baked in
+// at build time, in case the default port was already taken on someone's
+// machine.
+const BRIDGE_URL = window.jordanClawMaxDesktop?.bridgePort
+  ? `http://localhost:${window.jordanClawMaxDesktop.bridgePort}`
+  : process.env.REACT_APP_BRIDGE_URL || 'http://localhost:8787';
 
 const POLL_INTERVAL_MS = Number(
   process.env.REACT_APP_OPENCLAW_POLL_INTERVAL_MS || 5000

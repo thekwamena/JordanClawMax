@@ -50,6 +50,12 @@ body {
   color: #9a9aa5;
 }
 
+.app__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .app__reset {
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -62,6 +68,22 @@ body {
 }
 
 .app__reset:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.app__settings {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #f4f4f6;
+  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+  font-size: 15px;
+  transition: background 0.15s ease;
+}
+
+.app__settings:hover {
   background: rgba(255, 255, 255, 0.08);
 }
 

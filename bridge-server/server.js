@@ -121,7 +121,17 @@ if (require.main === module) {
   });
 }
 
-module.exports = { normalizeManifest, findClipFiles, findManifestPath, ensureVertical, jobOutputDir, OUTPUT_ROOT };
+module.exports = {
+  app,
+  PORT,
+  WORKSPACE,
+  normalizeManifest,
+  findClipFiles,
+  findManifestPath,
+  ensureVertical,
+  jobOutputDir,
+  OUTPUT_ROOT,
+};
 
 function clamp(n, min, max) {
   return Math.min(max, Math.max(min, n));

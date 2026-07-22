@@ -1,0 +1,49 @@
+{
+  "name": "jordanclawmax-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "author": "JordanClawMax",
+  "description": "JordanClawMax desktop app - AI-powered video clip extraction, running fully locally.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "multer": "^2.0.0"
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.jordanclawmax.desktop",
+    "productName": "JordanClawMax",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "bridge/**/*",
+      {
+        "from": "../bridge-server",
+        "to": "bridge-core",
+        "filter": ["server.js"]
+      }
+    ],
+    "extraResources": [
+      { "from": "../build", "to": "app-ui" }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
+  }
+}

@@ -5,6 +5,7 @@
   "description": "JordanClawMax - AI-powered video clip extraction tool built on the OpenClaw platform",
   "author": "Jordan",
   "license": "MIT",
+  "homepage": ".",
   "dependencies": {
     "axios": "^1.7.9",
     "dotenv": "^16.4.7",

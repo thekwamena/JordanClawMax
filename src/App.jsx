@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import VideoUpload from './components/VideoUpload';
 import ControlPanel from './components/ControlPanel';
 import ClipGallery from './components/ClipGallery';
+import SetupWizard from './components/SetupWizard';
 import {
   uploadVideo,
   invokeJordanClawMax,
@@ -15,8 +16,14 @@ const DEFAULT_SETTINGS = {
   maxLength: 30,
 };
 
+const IS_DESKTOP = !!window.jordanClawMaxDesktop?.isDesktop;
+
 // view: 'upload' | 'processing' | 'results'
 function App() {
+  // Only the desktop build has a bridge server capable of answering
+  // /api/setup/* - the browser/WSL dev setup assumes those tools are already
+  // configured (see SETUP_INSTRUCTIONS.md), so it skips straight past this.
+  const [setupReady, setSetupReady] = useState(!IS_DESKTOP);
   const [view, setView] = useState('upload');
   const [video, setVideo] = useState(null);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
@@ -122,6 +129,10 @@ function App() {
     clips.forEach((clip) => handleDownload(clip));
   }, [clips, handleDownload]);
 
+  if (!setupReady) {
+    return <SetupWizard onReady={() => setSetupReady(true)} />;
+  }
+
   return (
     <div className="app">
       <header className="app__header">
@@ -132,11 +143,23 @@ function App() {
             <p>Turn long-form video into share-ready clips, powered by OpenClaw.</p>
           </div>
         </div>
-        {view !== 'upload' && (
-          <button type="button" className="app__reset" onClick={resetToUpload}>
-            Start over
-          </button>
-        )}
+        <div className="app__header-actions">
+          {view !== 'upload' && (
+            <button type="button" className="app__reset" onClick={resetToUpload}>
+              Start over
+            </button>
+          )}
+          {IS_DESKTOP && (
+            <button
+              type="button"
+              className="app__settings"
+              title="Setup & local model status"
+              onClick={() => setSetupReady(false)}
+            >
+              ⚙
+            </button>
+          )}
+        </div>
       </header>
 
       {error && (

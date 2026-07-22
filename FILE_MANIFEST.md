@@ -16,6 +16,12 @@ jordanclawmax/
 │   ├── package.json                 plain HTTP for this app - see bridge-server/README.md
 │   └── README.md
 │
+├── desktop-app/                    (desktop-app branch) Electron build - one .exe with
+│   ├── main.js                      a guided first-run setup wizard, targeting native
+│   ├── preload.js                   Windows installs (no WSL) of ffmpeg/whisper/Ollama/
+│   ├── bridge/server.js             openclaw. Embeds bridge-server's core logic + adds
+│   └── README.md                    setup/install routes. See desktop-app/README.md.
+│
 ├── public/
 │   └── index.html                  HTML shell, mounts React at #root
 │

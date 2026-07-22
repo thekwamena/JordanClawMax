@@ -1,9 +1,11 @@
 # dependencies
 /node_modules
 bridge-server/node_modules
+desktop-app/node_modules
 
 # production
 /build
+desktop-app/release
 
 # env
 .env
