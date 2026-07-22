@@ -1,0 +1,125 @@
+.session-tabs {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 32px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  overflow-x: auto;
+}
+
+.session-tabs__list {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.session-tabs__tab {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: #17171d;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 2px;
+  flex-shrink: 0;
+}
+
+.session-tabs__tab--active {
+  border-color: rgba(255, 217, 61, 0.5);
+  background: rgba(255, 217, 61, 0.08);
+}
+
+.session-tabs__tab-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  color: #f4f4f6;
+  cursor: pointer;
+  padding: 6px 6px 6px 12px;
+  font-size: 13px;
+  max-width: 200px;
+}
+
+.session-tabs__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.session-tabs__dot--running {
+  background: #ffd93d;
+  animation: session-tabs-pulse 1.2s ease-in-out infinite;
+}
+
+.session-tabs__dot--done {
+  background: #78dc96;
+}
+
+.session-tabs__dot--failed {
+  background: #ff6b6b;
+}
+
+.session-tabs__dot--idle {
+  background: #6b6b75;
+}
+
+@keyframes session-tabs-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.session-tabs__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-tabs__count {
+  background: rgba(120, 220, 150, 0.15);
+  color: #78dc96;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.session-tabs__close {
+  background: none;
+  border: none;
+  color: #6b6b75;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 4px 10px 4px 4px;
+  flex-shrink: 0;
+}
+
+.session-tabs__close:hover {
+  color: #ff8a8a;
+}
+
+.session-tabs__new {
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px dashed rgba(255, 255, 255, 0.25);
+  color: #f4f4f6;
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.session-tabs__new:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+@media (max-width: 860px) {
+  .session-tabs {
+    padding: 10px 20px;
+  }
+}
