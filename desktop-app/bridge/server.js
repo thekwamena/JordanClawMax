@@ -7,7 +7,84 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
-const { execFile, spawn } = require('child_process');
+const { execFile, execFileSync, spawn } = require('child_process');
+
+// Some machines have OpenClaw/Ollama set up only inside a WSL distro, with
+// nothing equivalent installed natively on Windows (confirmed the hard way:
+// on such a machine, every extraction job silently failed instantly and
+// looped until the 30-minute ceiling, because there was no native openclaw
+// to spawn at all). Detect that *before* requiring the core bridge, since
+// WORKSPACE there is computed once at module-load time from
+// OPENCLAW_WORKSPACE - if a usable WSL install exists, route everything
+// through it instead of the native-install wizard below.
+function decodeWslOutput(buf) {
+  // wsl.exe -l -q has historically emitted UTF-16LE (with embedded null
+  // bytes) on older Windows builds, plain UTF-8 on newer ones - stripping
+  // null bytes recovers the distro names either way without needing to
+  // detect which encoding actually produced them.
+  return buf.toString('utf8').replace(/\u0000/g, '');
+}
+
+function detectWsl() {
+  if (process.platform !== 'win32') return null;
+  let distros;
+  try {
+    const out = execFileSync('wsl.exe', ['-l', '-q'], { timeout: 5000 });
+    distros = decodeWslOutput(out).split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  } catch (err) {
+    return null; // wsl.exe not installed / no distros - stay in native mode
+  }
+
+  for (const distro of distros) {
+    try {
+      const out = execFileSync(
+        'wsl.exe',
+        [
+          '-d', distro, '--', 'bash', '-lc',
+          'command -v openclaw >/dev/null && command -v ollama >/dev/null && command -v node >/dev/null && echo "$HOME"',
+        ],
+        { timeout: 8000 }
+      );
+      const home = decodeWslOutput(out).trim().split('\n').pop();
+      if (home && home.startsWith('/')) return { distro, home };
+    } catch (err) {
+      // This distro doesn't have the full stack on a login shell's PATH - try the next one.
+    }
+  }
+  return null;
+}
+
+function hasNativeStack() {
+  if (process.platform !== 'win32') return true;
+  try {
+    execFileSync('openclaw', ['--version'], { shell: true, timeout: 5000 });
+    execFileSync('ollama', ['--version'], { shell: true, timeout: 5000 });
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+// Prefer an already-working native install over WSL - a machine that has
+// both (e.g. this project's own dev machine, set up natively via the wizard
+// well before WSL detection existed) should keep behaving exactly as it did
+// before this existed. Only probe WSL at all when native isn't usable.
+const wslStack = hasNativeStack() ? null : detectWsl();
+let WSL_INFO;
+if (wslStack) {
+  const uncWorkspace = `\\\\wsl.localhost\\${wslStack.distro}${wslStack.home.replace(/\//g, '\\')}\\.openclaw\\workspace`;
+  process.env.JCM_EXEC_MODE = 'wsl';
+  process.env.JCM_WSL_DISTRO = wslStack.distro;
+  process.env.OPENCLAW_WORKSPACE = uncWorkspace;
+  process.env.JCM_WSL_WORKSPACE = `${wslStack.home}/.openclaw/workspace`;
+  WSL_INFO = {
+    active: true,
+    distro: wslStack.distro,
+    detail: `Using OpenClaw/Ollama already set up in WSL distro "${wslStack.distro}" - no native Windows install needed.`,
+  };
+} else {
+  WSL_INFO = { active: false };
+}
 
 const CORE_PATH = process.env.JCM_CORE_BRIDGE_PATH || path.join(__dirname, '..', '..', 'bridge-server', 'server.js');
 const { app, PORT, WORKSPACE } = require(CORE_PATH);
@@ -98,6 +175,30 @@ async function checkOpenclawGateway() {
 }
 
 app.get('/api/setup/status', async (req, res) => {
+  // When a usable WSL install was found at startup, the native-Windows
+  // checks below are all moot (and would just show red, since nothing was
+  // ever installed natively) - report the WSL stack as ready instead of
+  // running them, but still genuinely check the gateway itself (command
+  // presence alone doesn't guarantee it's actually running). See
+  // SetupWizard.jsx, which shows a banner and skips straight past the
+  // wizard when status.wsl.active is true.
+  if (WSL_INFO.active) {
+    const ready = { present: true, detail: WSL_INFO.detail };
+    const gatewayResult = await run('wsl.exe', ['-d', WSL_INFO.distro, '--', 'openclaw', 'gateway', 'status'], { timeout: 10000 });
+    const running = /Runtime:\s*running/i.test(gatewayResult.stdout);
+    return res.json({
+      wsl: WSL_INFO,
+      node: ready,
+      ffmpeg: ready,
+      python: ready,
+      whisper: ready,
+      ollama: ready,
+      ollamaModels: { present: true, models: [] },
+      openclaw: ready,
+      gateway: { configExists: true, running, detail: gatewayResult.stdout || gatewayResult.stderr || WSL_INFO.detail },
+    });
+  }
+
   await refreshPath();
   const [node, ffmpeg, python, whisper, ollama, ollamaModels, openclaw, gateway] = await Promise.all([
     checkCommand('node', ['--version']),
@@ -110,7 +211,7 @@ app.get('/api/setup/status', async (req, res) => {
     checkOpenclawGateway(),
   ]);
 
-  res.json({ node, ffmpeg, python, whisper, ollama, ollamaModels, openclaw, gateway });
+  res.json({ wsl: WSL_INFO, node, ffmpeg, python, whisper, ollama, ollamaModels, openclaw, gateway });
 });
 
 /** taskId -> { status, log: string[], error } */
@@ -166,6 +267,9 @@ const INSTALL_STEPS = {
 };
 
 app.post('/api/setup/install/:step', (req, res) => {
+  if (WSL_INFO.active) {
+    return res.status(400).json({ error: `Already using the stack set up in WSL distro "${WSL_INFO.distro}" - nothing to install natively.` });
+  }
   const buildCommands = INSTALL_STEPS[req.params.step];
   if (!buildCommands) return res.status(400).json({ error: `unknown step: ${req.params.step}` });
   const taskId = startTask(buildCommands());
@@ -173,6 +277,9 @@ app.post('/api/setup/install/:step', (req, res) => {
 });
 
 app.post('/api/setup/pull-model', (req, res) => {
+  if (WSL_INFO.active) {
+    return res.status(400).json({ error: `Already using the model(s) pulled in WSL distro "${WSL_INFO.distro}" - pull additional models there with "ollama pull".` });
+  }
   const modelName = (req.body?.modelName || '').trim();
   if (!isValidModelName(modelName)) return res.status(400).json({ error: 'invalid modelName' });
   const taskId = startTask([['ollama', ['pull', modelName]]]);
@@ -188,6 +295,19 @@ app.post('/api/setup/pull-model', (req, res) => {
  * turn stall or time out.
  */
 app.post('/api/setup/configure-gateway', async (req, res) => {
+  // In WSL mode the user already has their own OpenClaw config inside WSL -
+  // this flow patches in a fresh random token and model entry, which is
+  // meant for a from-scratch native install and would be unsafe to run
+  // against an existing config it knows nothing about. If the gateway isn't
+  // already running there, that's something to fix inside WSL directly.
+  if (WSL_INFO.active) {
+    return res.status(400).json({
+      error: `OpenClaw is set up in WSL distro "${WSL_INFO.distro}" - start its gateway there ` +
+        `("openclaw gateway status" / "openclaw gateway start" from a WSL terminal) rather than ` +
+        `reconfiguring it from here.`,
+    });
+  }
+
   const modelName = (req.body?.modelName || '').trim();
   if (!isValidModelName(modelName)) return res.status(400).json({ error: 'invalid modelName' });
 

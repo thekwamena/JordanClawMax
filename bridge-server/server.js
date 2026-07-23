@@ -4,11 +4,42 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const { spawn, execFile } = require('child_process');
+const { spawn, execFile, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const os = require('os');
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Resolves openclaw's real entry script (bypassing the openclaw.cmd shim)
+ * so it can be invoked directly via `node <script> ...` with a plain argv
+ * array and no shell involved at all - confirmed necessary the hard way:
+ * spawning `openclaw` with shell:true (needed on Windows since .cmd shims
+ * can't be exec'd without a shell) silently mangles long, punctuation-heavy
+ * arguments. A multi-sentence --message value containing the literal text
+ * "ffmpeg -i {video}" (an instructional example, not a real flag) got
+ * reparsed by cmd.exe such that "-i" arrived at openclaw as its own CLI
+ * option ("OpenClaw does not recognize option -i"), failing every attempt
+ * in about a second, well before any model call. Resolved once and cached -
+ * `npm root -g` + reading the package's own declared "bin" entry keeps this
+ * independent of any particular machine's install path.
+ */
+let cachedOpenclawEntry;
+function resolveOpenclawEntry() {
+  if (cachedOpenclawEntry !== undefined) return cachedOpenclawEntry;
+  try {
+    const globalRoot = execFileSync('npm', ['root', '-g'], { shell: process.platform === 'win32', encoding: 'utf8' }).trim();
+    const pkgDir = path.join(globalRoot, 'openclaw');
+    const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
+    const binField = typeof pkg.bin === 'string' ? pkg.bin : pkg.bin?.openclaw;
+    if (!binField) throw new Error('openclaw package.json has no "bin" entry');
+    cachedOpenclawEntry = path.join(pkgDir, binField);
+  } catch (err) {
+    console.error('[resolveOpenclawEntry] could not resolve openclaw entry script, falling back to the .cmd shim via shell:true:', err.message);
+    cachedOpenclawEntry = null;
+  }
+  return cachedOpenclawEntry;
+}
 
 const PORT = Number(process.env.PORT || 8787);
 // Clips are served by this same process; URLs need to be absolute since the
@@ -18,6 +49,45 @@ const BASE_URL = process.env.BRIDGE_BASE_URL || `http://localhost:${PORT}`;
 const WORKSPACE = process.env.OPENCLAW_WORKSPACE || path.join(os.homedir(), '.openclaw', 'workspace');
 const UPLOAD_DIR = path.join(WORKSPACE, 'clips', 'uploads');
 const OUTPUT_ROOT = path.join(WORKSPACE, 'clips', 'editedClips');
+
+// The desktop app runs as a native Windows process, but some machines only
+// have openclaw/ollama/ffmpeg set up inside a WSL distro (no native Windows
+// install at all) - see desktop-app/bridge/server.js, which detects this at
+// startup and sets these env vars before requiring this module. In that
+// mode, WORKSPACE above is a \\wsl.localhost\<distro>\... UNC path (so this
+// process's own fs.* calls - findClipFiles, static serving, etc. - work
+// unchanged), while JCM_WSL_WORKSPACE is the same directory as WSL itself
+// sees it (e.g. /home/user/.openclaw/workspace), needed whenever a command
+// actually has to run *inside* WSL via wsl.exe.
+const EXEC_MODE = process.env.JCM_EXEC_MODE === 'wsl' ? 'wsl' : 'native';
+const WSL_DISTRO = process.env.JCM_WSL_DISTRO || '';
+const WSL_NATIVE_WORKSPACE = process.env.JCM_WSL_WORKSPACE || '';
+
+/** Prefixes a command with `wsl.exe -d <distro> --` when running in WSL exec mode. */
+function wslWrap(cmd, args) {
+  if (EXEC_MODE !== 'wsl') return { cmd, args };
+  return {
+    cmd: 'wsl.exe',
+    args: [...(WSL_DISTRO ? ['-d', WSL_DISTRO] : []), '--', cmd, ...args],
+  };
+}
+
+/**
+ * Converts a WORKSPACE-relative Windows-side absolute path (which, in WSL
+ * exec mode, is really a \\wsl.localhost\<distro>\... UNC path) into the
+ * path WSL itself would use for the same file - needed because commands run
+ * via wsl.exe need a real Linux path, not the Windows UNC form this process
+ * uses for its own fs.* calls.
+ */
+function toWslNativePath(absPath) {
+  const rel = path.relative(WORKSPACE, absPath).split(path.sep).join('/');
+  return `${WSL_NATIVE_WORKSPACE}/${rel}`;
+}
+
+function runToolAsync(cmd, args) {
+  const wrapped = wslWrap(cmd, args);
+  return execFileAsync(wrapped.cmd, wrapped.args);
+}
 
 // A single agent turn on the local model reliably produces about one clip
 // before losing track of the rest of the job (see bridge-server/README.md).
@@ -220,6 +290,19 @@ const AUDIO_EXTRACT_INSTRUCTION =
   `do not substitute a different codec like libopus, which cannot be muxed into a .wav file): ` +
   `ffmpeg -i {video} -vn -acodec pcm_s16le -ar 16000 -ac 1 {output}/work/audio.wav`;
 
+// Some OpenClaw installs expose a "skill_workshop" tool (for authoring/
+// editing skills) alongside the exec/bash tool - a small local model, told
+// to "use the JordanClawMax skill," reliably confuses the two and calls
+// skill_workshop (with invalid arguments, in a loop) instead of actually
+// running the skill's documented steps, producing zero output. Confirmed by
+// comparing against an older OpenClaw install where this tool isn't
+// available at all: the same model there only ever called exec/read and
+// worked correctly. Naming the trap tool directly heads this off.
+const NO_SKILL_WORKSHOP_INSTRUCTION =
+  `Do not call the "skill_workshop" tool for this task - it is for authoring/editing skills, not running ` +
+  `them. To use the JordanClawMax skill, run its documented steps directly via the exec/bash tool ` +
+  `(ffmpeg, whisper, etc.), exactly as instructed above.`;
+
 // Each attempt runs in its own fresh Gateway session (see runJob) to avoid
 // the context filling up and getting compacted/truncated over a long,
 // multi-nudge job - observed to make the model lose track of which time
@@ -242,7 +325,8 @@ function commonParams(job) {
     `vary based on the actual content/moment, not be a fixed length - do not just chop the video into ` +
     `uniform back-to-back windows. ` +
     `${AUDIO_EXTRACT_INSTRUCTION} ` +
-    `${NO_SCRIPT_INSTRUCTION}`
+    `${NO_SCRIPT_INSTRUCTION} ` +
+    `${NO_SKILL_WORKSHOP_INSTRUCTION}`
   );
 }
 
@@ -277,19 +361,59 @@ function buildContinueMessage(job, clipsSoFar, usedRanges) {
 
 function runAgentTurn(sessionId, message, timeoutMs) {
   return new Promise((resolve) => {
-    const child = spawn(
-      'openclaw',
-      ['agent', '--agent', 'main', '--session-id', sessionId, '--message', message, '--json'],
-      { cwd: WORKSPACE }
-    );
+    const agentArgs = ['agent', '--agent', 'main', '--session-id', sessionId, '--message', message, '--json'];
+    let cmd, args, spawnOpts;
+
+    if (EXEC_MODE === 'wsl') {
+      // openclaw only exists inside the WSL distro on this machine - run it
+      // there via wsl.exe, with the working directory set to the workspace
+      // as WSL itself sees it (a native Windows `cwd` option here would set
+      // wsl.exe's own cwd, not the inner Linux command's).
+      cmd = 'wsl.exe';
+      args = [...(WSL_DISTRO ? ['-d', WSL_DISTRO] : []), '--cd', WSL_NATIVE_WORKSPACE, '--', 'openclaw', ...agentArgs];
+      spawnOpts = {};
+    } else {
+      const entry = process.platform === 'win32' ? resolveOpenclawEntry() : null;
+      if (entry) {
+        // Invoke the real script directly via the system node - a plain
+        // executable, so argv is passed through byte-for-byte with no shell
+        // involved and no risk of cmd.exe reparsing a long --message value.
+        // Deliberately NOT process.execPath: inside the desktop app, this
+        // process is itself a Node child forked from Electron's main
+        // process, so process.execPath is electron.exe, not node.exe -
+        // spawning that with a script argument tries to launch Electron
+        // itself rather than run the script as plain Node.
+        cmd = 'node';
+        args = [entry, ...agentArgs];
+        spawnOpts = { cwd: WORKSPACE };
+      } else {
+        // Fallback: openclaw resolves to an openclaw.cmd shim wherever it was
+        // npm-installed on Windows - spawn can't launch a .cmd directly
+        // without shell:true (fails instantly with ENOENT otherwise). Only
+        // used if resolving the real entry script above failed; known to
+        // mangle long/complex --message values, so it's a worse option, not
+        // a preferred one.
+        cmd = 'openclaw';
+        args = agentArgs;
+        spawnOpts = { cwd: WORKSPACE, shell: process.platform === 'win32' };
+      }
+    }
+
+    const child = spawn(cmd, args, spawnOpts);
+    let stderrBuf = '';
+    child.stderr?.on('data', (d) => { stderrBuf += d; });
 
     const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
-    child.on('close', () => {
+    child.on('close', (code) => {
       clearTimeout(timer);
+      if (code !== 0) {
+        console.error(`[runAgentTurn] openclaw exited with code ${code} for session ${sessionId}: ${stderrBuf.slice(0, 2000)}`);
+      }
       resolve();
     });
-    child.on('error', () => {
+    child.on('error', (err) => {
       clearTimeout(timer);
+      console.error(`[runAgentTurn] failed to spawn openclaw for session ${sessionId}:`, err.message);
       resolve();
     });
   });
@@ -501,22 +625,28 @@ function timeToSeconds(v) {
  * null if ffprobe couldn't read it (missing file, corrupt, tools unavailable).
  */
 async function ensureVertical(absPath) {
+  // In WSL exec mode, absPath is this process's UNC view of the file
+  // (\\wsl.localhost\<distro>\...) - ffmpeg/ffprobe run inside WSL via
+  // wsl.exe need the same file addressed as WSL itself would.
+  const toolPath = EXEC_MODE === 'wsl' ? toWslNativePath(absPath) : absPath;
+
   try {
-    const { stdout } = await execFileAsync('ffprobe', [
+    const { stdout } = await runToolAsync('ffprobe', [
       '-v', 'error',
       '-select_streams', 'v:0',
       '-show_entries', 'stream=width,height',
       '-of', 'csv=s=x:p=0',
-      absPath,
+      toolPath,
     ]);
     const [w, h] = stdout.trim().split('x').map(Number);
     if (w && h && w > h) {
       const tmpPath = `${absPath}.vertical.mp4`;
-      await execFileAsync('ffmpeg', [
-        '-y', '-i', absPath,
+      const tmpToolPath = EXEC_MODE === 'wsl' ? toWslNativePath(tmpPath) : tmpPath;
+      await runToolAsync('ffmpeg', [
+        '-y', '-i', toolPath,
         '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black',
         '-c:v', 'libx264', '-c:a', 'aac',
-        tmpPath,
+        tmpToolPath,
       ]);
       fs.renameSync(tmpPath, absPath);
     }
@@ -526,11 +656,11 @@ async function ensureVertical(absPath) {
   }
 
   try {
-    const { stdout } = await execFileAsync('ffprobe', [
+    const { stdout } = await runToolAsync('ffprobe', [
       '-v', 'error',
       '-show_entries', 'format=duration',
       '-of', 'default=noprint_wrappers=1:nokey=1',
-      absPath,
+      toolPath,
     ]);
     const duration = Number(stdout.trim());
     return Number.isFinite(duration) ? duration : null;

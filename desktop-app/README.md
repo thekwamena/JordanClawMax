@@ -4,7 +4,15 @@ A standalone Windows desktop build of JordanClawMax. Unlike the browser +
 WSL dev setup (see the repo root [SETUP_INSTRUCTIONS.md](../SETUP_INSTRUCTIONS.md)),
 this is meant to be **sent to someone else** - they download one installer,
 run it, and a guided first-run wizard gets the local AI stack set up on
-their own Windows machine. No WSL required.
+their own Windows machine.
+
+WSL is not *required* - the wizard can install everything natively via
+`winget`/`pip`/`npm` on a completely fresh machine. But if the machine
+already has OpenClaw/Ollama set up inside a WSL distro (a very common setup:
+"Windows host + Linux VM" almost always means WSL2 in practice) and nothing
+equivalent natively, the app detects that at startup and uses the WSL
+install directly instead of trying to install a second, redundant native
+stack - see "Using an existing WSL install" below.
 
 ## What this actually is
 
@@ -26,11 +34,41 @@ Some things (Node.js itself, if totally absent) may need the user to finish
 a dialog themselves; everything else is automated via `winget`/`pip`/`npm`
 where possible.
 
-## Windows-only dependency stack (no WSL)
+## Using an existing WSL install
 
-The browser/WSL dev setup runs `ffmpeg`/`whisper`/`ollama`/`openclaw` inside
-WSL Ubuntu. This build targets **native Windows** installs of all of them
-instead, since requiring WSL (admin rights, a reboot, Windows Pro/Home
+Before doing anything else, `desktop-app/bridge/server.js` runs `wsl.exe -l -q`
+and, for each distro found, checks (via a login shell, so PATH customizations
+in `.bashrc`/`.zshrc`/linuxbrew setups are picked up) whether `openclaw`,
+`ollama`, and `node` are all on its `PATH`. If one is, that distro is used
+directly for the rest of the app's lifetime:
+
+- The core bridge (`bridge-server/server.js`) spawns `openclaw agent ...` via
+  `wsl.exe -d <distro> --cd <workspace> -- openclaw agent ...` instead of
+  spawning `openclaw` natively, and routes the `ffmpeg`/`ffprobe`
+  re-encode/probe calls in `ensureVertical()` through `wsl.exe` the same way.
+- Its `WORKSPACE` points at the distro's `~/.openclaw/workspace` via the
+  `\\wsl.localhost\<distro>\...` UNC path, so this process's own file
+  operations (serving clips, scanning for `clips.json`, etc.) work exactly
+  as they do natively - WSL2 exposes its filesystem to Windows this way with
+  no extra setup.
+- The Setup Wizard is skipped entirely: `/api/setup/status` reports
+  everything as ready and shows a banner naming the detected distro, rather
+  than running (and failing) all the native-Windows checks below.
+- `/api/setup/install/*`, `/api/setup/pull-model`, and
+  `/api/setup/configure-gateway` all refuse to run in this mode - patching in
+  a fresh gateway config/token would be unsafe against a config the app
+  doesn't know the shape of. If the gateway isn't already running, start it
+  from inside WSL directly (`openclaw gateway status` / `gateway start`).
+
+This detection only looks at `PATH` inside WSL, not whether the gateway is
+actually running yet - `/api/setup/status` checks that separately with a
+real `openclaw gateway status` call through `wsl.exe`.
+
+## Windows-only dependency stack (fallback: no WSL detected)
+
+If no WSL distro has the full stack on its `PATH` (or WSL isn't installed at
+all), this build falls back to targeting **native Windows** installs of
+everything, since requiring WSL (admin rights, a reboot, Windows Pro/Home
 considerations) is a much bigger ask for someone just trying the app out:
 
 | Tool | Install method | winget/pip package |
@@ -93,6 +131,39 @@ since the desktop app loads the built output, not the dev server.
 Things actually hit (and fixed) while building/testing this, in case they
 show up again on someone else's machine. All of these are fixed as of
 v1.2.0 - if you're on an older build, update first.
+
+### App is stuck on "Starting JordanClawMax..." and eventually fails with "Timed out after 30 minutes without producing clips.json"
+
+**Symptom:** the Setup Wizard (if shown) reports everything green, you start
+an extraction, and it just sits there until it times out with zero clips -
+no errors visible anywhere in the UI.
+
+**Two separate causes were found, both silent by design (which made this
+hard to diagnose) - both are fixed as of the version after v1.3.0:**
+
+1. **Missing `shell: true` on the actual job-running command.** The bridge
+   invokes the agent via `spawn('openclaw', [...])` - on Windows, `openclaw`
+   resolves to an `openclaw.cmd` npm shim, which `spawn` cannot launch
+   without `shell: true` (unlike a plain executable). Without it, the spawn
+   fails instantly with `ENOENT` on *every single attempt*, and the error
+   handler silently resolved and moved on - so the job just spun through
+   attempts for the full 30 minutes and reported a generic timeout with no
+   indication anything had gone wrong. Check the app's console/terminal
+   output for `[runAgentTurn] failed to spawn openclaw` - if you see that
+   repeating rapidly, you're on a build before this fix; update.
+2. **OpenClaw/Ollama only installed inside WSL, not natively on Windows.**
+   If your setup is "Windows machine running a Linux VM with Ubuntu" (this
+   almost always means WSL2), the Setup Wizard's native-Windows checks are
+   irrelevant to your actual install - the app now auto-detects a WSL distro
+   with the full stack on its `PATH` and uses that instead (see "Using an
+   existing WSL install" above). If you're on a build before this fix, the
+   native checks would show red (or, worse, could pass if you happen to
+   also have a partial native install, while the actual job still fails)
+   with no way to point the app at WSL. Update to a build with WSL
+   auto-detection, and make sure `openclaw gateway status` shows `Runtime:
+   running` **from inside WSL** (not a native Windows PowerShell - they are
+   two completely separate installs even if both show a program named
+   `openclaw`).
 
 ### "Re-check everything" still shows a tool as missing right after installing it
 

@@ -139,6 +139,12 @@ function SetupWizard({ onReady }) {
           This is a one-time setup - JordanClawMax runs entirely on your own machine, using a
           local AI model, so there's a short checklist of tools to install first.
         </p>
+        {status.wsl?.active && (
+          <p className="setup-wizard__wsl-banner">
+            Detected OpenClaw/Ollama already set up in WSL distro "{status.wsl.distro}" - using that
+            instead of installing native Windows copies.
+          </p>
+        )}
       </header>
 
       <ol className="setup-wizard__steps">
